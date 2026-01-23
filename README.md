@@ -5,7 +5,7 @@ It only supports CPUs with AVX2 and BMI2 instructions.
 
 ## Compiling
 
-Tested on Windows and Linux with GCC >= 12. Might also work with CLang
+Tested on Windows and Linux with clang 18 or higher.
 
 ```sh
 make release
@@ -41,11 +41,9 @@ Time: 3455ms
  - Iterative deepening
  - Aspiration window
  - Negamax
- - Transpositation Table
- - Check extension
+ - Transposition Table
  - Null move pruning (NMP)
  - Reverse futility pruning (RFP)
- - Internal iterative reduction (IIR)
  - Late move reduction (LMR)
  - Late move pruning (LMP)
  - SEE pruning

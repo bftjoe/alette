@@ -3652,15 +3652,6 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         return eval;
     }
 
-    // Razoring
-    if (!PvNode && !inCheck && depth <= 2
-        && eval + (400 * depth) <= alpha)
-    {
-        Score score = qSearch<Me, QNodeType>(alpha, beta, depth, ply);
-        if (score <= alpha)
-            return score;
-    }
-
     // Null move pruning (NMP)
     if (!PvNode && !inCheck
         && pos.previousMove() != MOVE_NULL && pos.hasNonPawnMateriel<Me>() && eval >= beta)
