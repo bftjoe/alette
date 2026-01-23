@@ -42,10 +42,6 @@ Time: 3455ms
  - Aspiration window
  - Negamax
  - Transposition Table
- - Null move pruning (NMP)
- - Reverse futility pruning (RFP)
- - Late move reduction (LMR)
- - Late move pruning (LMP)
  - SEE pruning
  - Quiescence
 

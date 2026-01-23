@@ -10,20 +10,15 @@ You should have received a copy of the GNU General Public License along with thi
 #include <string>
 #include <sstream>
 #include <istream>
-#include <iostream>
 #include <iomanip>
 #include <fstream>
 #include <filesystem>
 
-#include <string>
-#include <map>
 #include <set>
 #include <cassert>
-#include <sstream>
 #include <functional>
 
 #include <chrono>
-#include <string>
 
 namespace alette {
 
@@ -471,12 +466,10 @@ inline Bitboard  operator|(Square s1, Square s2) { return bb(s1) | bb(s2); }
 
 } /* namespace alette */
 
-#include <string>
 #include <array>
 #include <vector>
 
 #include <immintrin.h>
-#include <cassert>
 
 namespace alette {
 
@@ -700,7 +693,6 @@ public:
     inline bool isRepetitionDraw() const;
 
     inline bool isFiftyMoveDraw() const { return state->fiftyMoveRule > 99; }
-    inline bool isMaterialDraw() const;
     template<Side Me> inline bool hasNonPawnMateriel() { return getPiecesBB(Me, PAWN, KING) != getPiecesBB(Me); }
 
     template<Side Me> bool isLegal(Move m) const;
@@ -754,28 +746,6 @@ inline Bitboard Position::getAttackers(Square sq, Bitboard occupied) const {
           | (attacks<ROOK>(sq, occupied) & getPiecesTypeBB(ROOK, QUEEN))
           | (attacks<KING>(sq) & getPiecesTypeBB(KING))
     );
-}
-
-inline bool Position::isMaterialDraw() const {
-    if ((getPiecesTypeBB(PAWN) | getPiecesTypeBB(ROOK) | getPiecesTypeBB(QUEEN)) != 0)
-        return false;
-
-    // Not accurate for KBxKB which should be insufficient materiel if bishops are opposite colors, 
-    // but it's too expensive to compute ^^
-    if (popcount(getPiecesBB(WHITE)) > 1 && popcount(getPiecesBB(BLACK)) > 1)
-        return false;
-
-    // Not accurate for KBBxK where the bishops are same color, which is extremly rare
-    if (popcount(getPiecesTypeBB(KNIGHT) | getPiecesTypeBB(BISHOP)) > 1)
-        return false;
-
-    if (!getPiecesTypeBB(BISHOP))
-        return false;
-
-    if (popcount(getPiecesTypeBB(KNIGHT)) < 3)
-        return false;
-
-    return true;
 }
 
 // Check if a position occurs 3 times in the game history
@@ -1032,8 +1002,6 @@ inline Score evaluate(const Position &pos) {
 } /* namespace alette */
 
 #include <initializer_list>
-#include <cassert>
-#include <cstdint>
 #include <algorithm>
 
 namespace alette {
@@ -1514,8 +1482,6 @@ inline void generateLegalMoves(const Position &pos, MoveList &moves) {
 
 } /* namespace alette */
 
-#include <cstdint>
-
 namespace alette {
 
 using MoveScore = int32_t;
@@ -1594,11 +1560,7 @@ private:
 
 } /* namespace alette */
 
-#include <cstdint>
-#include <algorithm>
-
 #include <cstdlib>
-#include <cstdint>
 #include <tuple>
 
 namespace alette {
@@ -2050,9 +2012,7 @@ enum class NodeType {
 };
 
 class Engine {
-public:
-    static void init();
-    
+public:    
     Engine() = default;
     virtual ~Engine() = default;
 
@@ -2072,8 +2032,6 @@ protected:
     virtual void onSearchFinish(const SearchEvent &event) = 0;
 
 private:
-    static int LMRTable[MAX_PLY][MAX_MOVE];
-
     std::unique_ptr<SearchData> sd;
     Position rootPosition;
     bool aborted = true;
@@ -2221,7 +2179,6 @@ using namespace alette;
 
 int main(int argc, char* argv[])
 {
-    Engine::init();
     BB::init();
     Zobrist::init();
 
@@ -2289,8 +2246,6 @@ UciOption& UciOption::operator=(const std::string& newValue)
 }
 
 } /* namespace alette */
-
-#include <iostream>
 
 namespace alette {
 
@@ -2411,8 +2366,6 @@ void init()
 
 } /* namespace alette */
 
-#include <cstdint>
-
 namespace alette {
 
 namespace Zobrist {
@@ -2451,7 +2404,6 @@ namespace Zobrist {
 }
 
 } /* namespace alette */
-#include <sstream>
 #include <cstring>
 
 namespace alette {
@@ -2655,8 +2607,6 @@ std::ostream& operator<<(std::ostream& os, const Position& pos) {
         os << "[Draw by fifty move rule]" << std::endl;
     if (pos.isRepetitionDraw())
         os << "[Draw by 3-fold repetition]" << std::endl;
-    if (pos.isMaterialDraw())
-        os << "[Draw by insufficient material]" << std::endl;
 
     return os;
 }
@@ -3295,7 +3245,6 @@ template Score evaluate<WHITE>(const Position &pos);
 template Score evaluate<BLACK>(const Position &pos);
 
 } /* namespace alette */
-#include <iostream>
 
 namespace alette {
 
@@ -3317,7 +3266,6 @@ std::ostream& operator<<(std::ostream& os, const MoveList& moves) {
 namespace alette {
 
 } /* namespace alette */
-#include <cstring>
 #include <stdexcept>
 
 namespace alette {
@@ -3420,21 +3368,10 @@ void TranspositionTable::set(TTEntry *tte, uint64_t hash, int depth, int ply, Bo
 namespace alette {
 
 } /* namespace alette */
-#include <iostream>
 #include <thread>
 #include <cmath>
 
 namespace alette {
-
-int Engine::LMRTable[MAX_PLY][MAX_MOVE];
-
-void Engine::init() {
-    for (int d=1; d<MAX_PLY; d++) {
-        for (int m=1; m<MAX_PLY; m++) {
-            LMRTable[d][m] = int(0.25 + 0.46 * std::log(d) * std::log(m));
-        }
-    }
-}
 
 void updatePv(MoveList &pv, Move move, const MoveList &childPv) {
     pv.clear();
@@ -3559,16 +3496,6 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         return qSearch<Me, QNodeType>(alpha, beta, depth, ply);
     }
 
-    // Check if we should stop according to limits
-    if (!RootNode && sd->shouldStop()) [[unlikely]] {
-        stop();
-    }
-
-    // If search has been aborted (either by the gui or by reaching limits) exit here
-    if (!RootNode && searchAborted()) [[unlikely]] {
-        return -SCORE_INFINITE;
-    }
-
     // Mate distance pruning
     if (!RootNode) {
         alpha = std::max(alpha, -SCORE_MATE + ply);
@@ -3590,14 +3517,9 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         node.pv.clear();
     }
 
-    if (pos.isFiftyMoveDraw() || pos.isMaterialDraw() || pos.isRepetitionDraw()) {
+    if (pos.isFiftyMoveDraw() || pos.isRepetitionDraw()) {
         // "Random" either -1 or 1, avoid blindness to 3-fold repetitions
         return 1-(sd->nbNodes & 2);
-        //return SCORE_DRAW;
-    }
-
-    if (ply >= MAX_PLY) [[unlikely]] {
-        return evaluate<Me>(pos); // TODO: verify if we are in check ?
     }
 
     // Query Transposition Table
@@ -3635,30 +3557,6 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         node.staticEval = eval = SCORE_NONE;
     }
 
-    // Reverse futility pruning (RFP)
-    if (!PvNode && !inCheck && depth <= 8
-        && eval - ((improving ? 60 : 120) * depth) >= beta)
-    {
-        return eval;
-    }
-
-    // Null move pruning (NMP)
-    if (!PvNode && !inCheck
-        && pos.previousMove() != MOVE_NULL && pos.hasNonPawnMateriel<Me>() && eval >= beta)
-    {
-        tt.prefetch(pos.getHashAfterNullMove());
-        int R = 4 + depth / 4;
-
-        pos.doNullMove<Me>();
-        Score score = -pvSearch<~Me, NodeType::NonPV>(-beta, -beta+1, depth-R, ply+1, !cutNode);
-        pos.undoNullMove<Me>();
-
-        if (score >= beta) {
-            // TODO: verification search ?
-            return score >= SCORE_MATE_MAX_PLY ? beta : score;
-        }
-    }
-
     sd->moveHistory.clearKillers(ply+1);
 
     int nbMoves = 0;
@@ -3674,17 +3572,6 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
 
         bool moveIsTactical = pos.isTactical(move);
 
-        // Late move pruning
-        if (!RootNode && bestScore > -SCORE_MATE_MAX_PLY) {
-            // Move count pruning
-            skipQuiets = (nbMoves >= 3 + depth*depth/(improving ? 1 : 2));
-
-            // SEE Pruning
-            if (depth <= 8 && !pos.see(move, moveIsTactical ? -100*depth : -60*depth)) {
-                return true; // continue;
-            }
-        }
-
         sd->nbNodes++;
 
         if (PvNode)
@@ -3695,34 +3582,11 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
 
         Score score;
 
-        // Late move reduction (LMR)
-        if (depth >= 2 && nbMoves > 1) {
-            int R = LMRTable[depth][nbMoves];
-
-            R -= PvNode;
-            R -= pos.inCheck();
-            R += !ttPv;
-            R += ttTactical;
-            R += 2*cutNode;
-            R += !improving;
-            R -= sd->moveHistory.getHistory<Me>(move) / 2048;
-
-            R = std::min(depth - 1, std::max(1, R));
-
-            // Reduced depth, Zero window
-            score = -pvSearch<~Me, NodeType::NonPV>(-alpha-1, -alpha, depth-R, ply+1, true);
-
-            if (score > alpha && R != 1) {
-                // Full depth, Zero window
-                score = -pvSearch<~Me, NodeType::NonPV>(-alpha-1, -alpha, depth-1, ply+1, !cutNode);
-            }
-
-        } else if (!PvNode || nbMoves > 1) {
+        if (!PvNode || nbMoves > 1) {
             // Zero window (PVS)
             score = -pvSearch<~Me, NodeType::NonPV>(-alpha-1, -alpha, depth-1, ply+1, !cutNode);
         }
-
-        if (PvNode && (nbMoves == 1 || (score > alpha && (RootNode || score < beta)))) {
+        else {
             // Full window (PVS)
             score = -pvSearch<~Me, NodeType::PV>(-beta, -alpha, depth-1, ply+1, false);
         }
@@ -3773,30 +3637,14 @@ template<Side Me, NodeType NT>
 Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
     constexpr bool PvNode = (NT != NodeType::NonPV);
 
-    // Check if we should stop according to limits
-    if (sd->shouldStop()) [[unlikely]] {
-        stop();
-    }
-
-    // If search has been aborted (either by the gui or by limits) exit here
-    if (searchAborted()) [[unlikely]] {
-        return -SCORE_INFINITE;
-    }
-
     // Default bestScore for mate detection, if InCheck and there is no move this score will be returned
     Score bestScore = -SCORE_MATE + ply;
     Move bestMove = MOVE_NONE;
     Position &pos = sd->position;
-    //Node& node = sd->node(ply);
 
-    if (pos.isFiftyMoveDraw() || pos.isMaterialDraw() || pos.isRepetitionDraw()) {
+    if (pos.isFiftyMoveDraw() || pos.isRepetitionDraw()) {
         // "Random" either -1 or 1, avoid blindness to 3-fold repetitions
         return 1-(sd->nbNodes & 2);
-        //return SCORE_DRAW;
-    }
-
-    if (ply >= MAX_PLY) [[unlikely]] {
-        return evaluate<Me>(pos); // TODO: check if we are in check ?
     }
 
     bool inCheck = pos.inCheck();
@@ -3841,7 +3689,6 @@ Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
     // If ttMove is quiet we don't want to use it past a certain depth to allow qSearch to stabilize
     bool useTTMove = ttHit && isValidMove(ttMove) && (depth >= -7 || pos.inCheck() || pos.isTactical(ttMove));
     MovePicker mp(pos, useTTMove ? ttMove : MOVE_NONE);
-    //MovePicker *mp = new (&node.mp) MovePicker(pos, useTTMove ? ttMove : MOVE_NONE);
 
     mp.enumerate<QUIESCENCE, Me>([&](Move move, /*unused*/bool& skipQuiets) -> bool {
         // SEE Pruning
@@ -3852,8 +3699,6 @@ Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
         pos.doMove<Me>(move);
         Score score = -qSearch<~Me, NT>(-beta, -alpha, depth-1, ply+1);
         pos.undoMove<Me>(move);
-
-        if (searchAborted()) return false; // break
 
         if (score > bestScore) {
             bestScore = score;
@@ -3869,7 +3714,7 @@ Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
         }
 
         return true;
-    }); if (searchAborted()) return bestScore;
+    });
 
     // Update Transposition Table
     Bound ttBound = bestScore >= beta ? BOUND_LOWER : BOUND_UPPER;
@@ -3879,13 +3724,11 @@ Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
 }
 
 } /* namespace alette */
-#include <cassert>
-#include <algorithm>
 #include <ctime>
 
 namespace alette {
 
-constexpr int DEFAULT_BENCH_DEPTH = 15;
+constexpr int DEFAULT_BENCH_DEPTH = 8;
 
 void bench(int depth);
     
@@ -4019,11 +3862,11 @@ void Uci::loop(int argc, char* argv[]) {
         token.clear();
         parser >> std::skipws >> token;
 
-        bool unknowCommand = true, exit = false;
+        bool unknownCommand = true, exit = false;
         for (auto const& [cmd, handler] : commands) {
             if (cmd != token) continue;
 
-            unknowCommand = false;
+            unknownCommand = false;
 
             if (!(this->*handler)(parser)) {
                 exit = true;
@@ -4032,8 +3875,8 @@ void Uci::loop(int argc, char* argv[]) {
             break;
         }
 
-        if (unknowCommand) {
-            console << "Unknow command '" << token << "'" << std::endl;
+        if (unknownCommand) {
+            console << "Unknown command '" << token << "'" << std::endl;
         }
 
         if (exit) {
@@ -4475,10 +4318,6 @@ void perft(Position &pos, int depth) {
 }
 
 } /* namespace alette */
-#include <vector>
-#include <chrono>
-#include <thread>
-#include <algorithm>
 
 namespace alette {
 
