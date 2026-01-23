@@ -2020,7 +2020,6 @@ struct SearchData {
     Position position;
     SearchLimits limits;
     size_t nbNodes;
-    int selDepth;
 
     TimeMs startTime;
     TimeMs lastCheck;
@@ -2033,11 +2032,10 @@ struct SearchData {
 };
 
 struct SearchEvent {
-    SearchEvent(int depth_, int selDepth_, const MoveList &pv_, Score bestScore_, size_t nbNode_, TimeMs elapsed_, size_t hashfull_): 
-        depth(depth_), selDepth(selDepth_), pv(pv_), bestScore(bestScore_), nbNodes(nbNode_), elapsed(elapsed_), hashfull(hashfull_) { }
+    SearchEvent(int depth_, const MoveList &pv_, Score bestScore_, size_t nbNode_, TimeMs elapsed_, size_t hashfull_): 
+        depth(depth_), pv(pv_), bestScore(bestScore_), nbNodes(nbNode_), elapsed(elapsed_), hashfull(hashfull_) { }
 
     int depth;
-    int selDepth;
     const MoveList &pv;
     Score bestScore;
     size_t nbNodes;
@@ -3490,9 +3488,6 @@ void Engine::idSearch() {
         Score alpha = -SCORE_INFINITE, beta = SCORE_INFINITE;
         Score delta = 0, score = -SCORE_INFINITE;
 
-        // Reset selDepth
-        sd->selDepth = 0;
-
         searchDepth = depth;
 
         // Aspiration window
@@ -3533,14 +3528,14 @@ void Engine::idSearch() {
         bestScore = score;
         completedDepth = depth;
 
-        onSearchProgress(SearchEvent(depth, sd->selDepth, bestPv, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage()));
+        onSearchProgress(SearchEvent(depth, bestPv, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage()));
 
         if (sd->limits.maxDepth > 0 && depth >= sd->limits.maxDepth) break;
 
         if (sd->shouldStopSoft()) break;
     }
 
-    SearchEvent event(depth, sd->selDepth, bestPv, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage());
+    SearchEvent event(depth, bestPv, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage());
 
     if (depth != completedDepth) {
         event.depth = completedDepth;
@@ -3562,11 +3557,6 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
     // Quiescence
     if (depth <= 0) {
         return qSearch<Me, QNodeType>(alpha, beta, depth, ply);
-    }
-
-    // Update selDepth
-    if (PvNode && sd->selDepth < ply + 1) {
-        sd->selDepth = ply + 1;
     }
 
     // Check if we should stop according to limits
@@ -4272,7 +4262,6 @@ bool Uci::cmdBench(std::istringstream& is) {
 void UciEngine::onSearchProgress(const SearchEvent &event) {
     console << "info"
         << " depth " << event.depth 
-        << " seldepth " << event.selDepth 
         << " multipv " << 1
         << " score " << Uci::formatScore(event.bestScore)
         << " nodes " << event.nbNodes
