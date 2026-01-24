@@ -1761,9 +1761,6 @@ bool MovePicker::enumerate(const Handler &handler) {
     // Tacticals
     enumerateLegalMoves<Me, TACTICAL_MOVES>(*pos, [&](Move m) {
         if (m == ttMove) return true; // continue;
-        
-        if (moves.size() < 16)
-            tt.prefetch(pos->getHashAfter(m));
 
         ScoredMove newMove = ScoredMove(m, scoreTactical<Me>(m));
         moves.insert_sorted(newMove, compare);
@@ -1786,10 +1783,6 @@ bool MovePicker::enumerate(const Handler &handler) {
     if constexpr(Type == QUIESCENCE) return true;
 
     if (moveHistory != nullptr) [[likely]] {
-        tt.prefetch(pos->getHashAfter(refutations[0]));
-        tt.prefetch(pos->getHashAfter(refutations[1]));
-        tt.prefetch(pos->getHashAfter(refutations[2]));
-        
         // Killer 1
         if (refutations[0] != ttMove && !pos->isTactical(refutations[0]) && pos->isLegal<Me>(refutations[0])) {
             CALL_HANDLER(refutations[0], skipQuiets);
@@ -1813,9 +1806,6 @@ bool MovePicker::enumerate(const Handler &handler) {
     enumerateLegalMoves<Me, QUIET_MOVES>(*pos, [&](Move m) {
         if (m == ttMove) return true; // continue;
         if (refutations[0] == m || refutations[1] == m || refutations[2] == m) return true; // continue
-
-        if (moves.size() < 48)
-            tt.prefetch(pos->getHashAfter(m));
 
         ScoredMove newMove = ScoredMove(m, scoreQuiet<Me>(m));
         moves.insert_sorted(newMove, compare);
@@ -2152,7 +2142,6 @@ private:
     bool cmdDebug(std::istringstream& is);
     bool cmdEval(std::istringstream& is);
     bool cmdPerft(std::istringstream& is);
-    bool cmdPerftmp(std::istringstream& is);
     bool cmdTest(std::istringstream& is);
     bool cmdBench(std::istringstream& is);
 };
@@ -2169,9 +2158,6 @@ namespace alette {
 
 template<bool Div> size_t perft(Position &pos, int depth);
 void perft(Position &pos, int depth);
-
-template<bool Div> size_t perftmp(Position &pos, int depth);
-void perftmp(Position &pos, int depth);
 
 } /* namespace alette */
 
@@ -3775,7 +3761,6 @@ Uci::Uci()  {
     commands["d"] = &Uci::cmdDebug;
     commands["eval"] = &Uci::cmdEval;
     commands["perft"] = &Uci::cmdPerft;
-    commands["perftmp"] = &Uci::cmdPerftmp;
     commands["test"] = &Uci::cmdTest;
     commands["bench"] = &Uci::cmdBench;
 }
@@ -3975,8 +3960,6 @@ bool Uci::cmdGo(std::istringstream& is) {
     while (is >> token) {
         if (token == "perft") {
             return cmdPerft(is);
-        } else if (token == "perftmp") {
-            return cmdPerftmp(is);
         } else if (token == "searchmoves") {
             while (is >> token) {
                 Move m = Uci::parseMove(token);
@@ -4065,15 +4048,6 @@ bool Uci::cmdPerft(std::istringstream& is) {
     is >> depth;
 
     perft(engine.position(), depth);
-
-    return true;
-}
-
-bool Uci::cmdPerftmp(std::istringstream& is) {
-    int depth = 1;
-    is >> depth;
-
-    perftmp(engine.position(), depth);
 
     return true;
 }
@@ -4186,72 +4160,6 @@ void run() {
 } /* namespace alette::Test */
 
 namespace alette {
-
-/**
- * Perft using the MovePicker (slower)
- */
-template<bool Div, Side Me>
-size_t perftmp(Position &pos, int depth) {
-    size_t total = 0;
-    MoveList moves;
-    
-    if (!Div && depth <= 1) {
-        MovePicker mp(pos);
-        mp.enumerate<MAIN, Me>([&](Move m, bool& skipQuiets) {
-            total += 1;
-            return true;
-        });
-
-        return total;
-    }
-    
-    MovePicker mp(pos);
-    mp.enumerate<MAIN, Me>([&](Move move, bool& skipQuiets) {
-        size_t n = 0;
-
-        if (Div && depth == 1) {
-            n = 1;
-        } else {
-            pos.doMove<Me>(move);
-            n = (depth == 1 ? 1 : perftmp<false, ~Me>(pos, depth - 1));
-            pos.undoMove<Me>(move);
-        }
-
-        total += n;
-
-        if (Div && n > 0)
-            console << Uci::formatMove(move) << ": " << n << std::endl;
-
-        return true;
-    });
-
-    return total;
-}
-
-template size_t perftmp<true, WHITE>(Position &pos, int depth);
-template size_t perftmp<false, WHITE>(Position &pos, int depth);
-template size_t perftmp<true, BLACK>(Position &pos, int depth);
-template size_t perftmp<false, BLACK>(Position &pos, int depth);
-
-template<bool Div>
-size_t perftmp(Position &pos, int depth) {
-    return pos.getSideToMove() == WHITE ? perftmp<Div, WHITE>(pos, depth) : perftmp<Div, BLACK>(pos, depth);
-}
-
-template size_t perftmp<true>(Position &pos, int depth);
-template size_t perftmp<false>(Position &pos, int depth);
-
-void perftmp(Position &pos, int depth) {
-    console << "perft depth=" << depth << std::endl;
-    auto begin = now();
-    size_t n = perftmp<true>(pos, depth);
-    auto end = now();
-
-    auto elapsed = end - begin;
-    console << std::endl << "Nodes: " << n << std::endl;
-	console << "NPS: " << size_t(n * 1000 / elapsed) << std::endl;
-	console << "Time: " << elapsed << "ms" << std::endl;
-}
 
 /**
  * Perft using the legal move generator (faster)
