@@ -1567,48 +1567,64 @@ namespace alette {
 
 constexpr size_t TT_DEFAULT_SIZE = 1024*1024*16;
 
-constexpr int TT_ENTRIES_PER_BUCKET = 3;
+constexpr int TT_ENTRIES_PER_BUCKET = 2;
 
 enum Bound {
-    BOUND_NONE = 0,
+    BOUND_EXACT = 0,
     BOUND_LOWER = 1,
-    BOUND_UPPER = 2,
-    BOUND_EXACT = BOUND_LOWER | BOUND_UPPER
+    BOUND_NONE  = 2,
+    BOUND_UPPER = 3
 };
 
 class TTEntry {
 public:
-    static constexpr uint8_t AGE_MASK   = 0b11111000;
-    static constexpr uint8_t PV_MASK    = 0b00000100;
-    static constexpr uint8_t BOUND_MASK = 0b00000011;
-    static constexpr int AGE_DELTA = 0x8;
+    static constexpr uint8_t AGE_MASK   = 0b11111110;
+    static constexpr uint8_t PV_MASK    = 0b00000001;
+    static constexpr int AGE_DELTA = 0x2;
     static constexpr int AGE_CYCLE = 0xFF + AGE_DELTA;
 
     inline bool empty() const { return hash16 == 0; }
     inline bool hashEquals(uint64_t hash) const { return hash16 == (uint16_t)hash; }
     inline Move move() const { return (Move)move16; }
-    inline Score eval() const { return eval16; }
+
+    inline Bound bound() const { return Bound(ibv_value & 3); }
+
     inline Score score(int ply) const {
-        return score16 == SCORE_NONE ? SCORE_NONE
-             : score16 >=  SCORE_MATE_MAX_PLY ? score16 - ply
-             : score16 <= -SCORE_MATE_MAX_PLY ? score16 + ply 
-             : score16;
+        Score s;
+        Bound b = bound();
+
+        if (b == BOUND_EXACT) s = ibv_value / 4;
+        else if (b == BOUND_LOWER) s = (ibv_value - 1) / 4;
+        else if (b == BOUND_UPPER) s = (ibv_value + 1) / 4;
+        else return SCORE_NONE;
+
+        return s >=  SCORE_MATE_MAX_PLY ? s - ply
+             : s <= -SCORE_MATE_MAX_PLY ? s + ply
+             : s;
     }
-    inline void score(Score s, int ply) {
-        score16 = (int16_t) (s ==  SCORE_NONE   ? SCORE_NONE
-                           : s >=  SCORE_MATE_MAX_PLY ? s + ply
-                           : s <= -SCORE_MATE_MAX_PLY ? s - ply : s);
+
+    inline void set(Score s, Bound b, int ply) {
+        Score val = s >=  SCORE_MATE_MAX_PLY ? s + ply
+                  : s <= -SCORE_MATE_MAX_PLY ? s - ply
+                  : s;
+        
+        if (b == BOUND_EXACT) ibv_value = (val << 2);
+        else if (b == BOUND_LOWER) ibv_value = (val << 2) + 1;
+        else if (b == BOUND_UPPER) ibv_value = (val << 2) - 1;
     }
+    
     inline int depth() const { return depth8; }
     inline uint8_t age() const { return ageFlags8 & AGE_MASK; }
     inline bool isPv() const { return bool(ageFlags8 & PV_MASK); }
-    inline Bound bound() const { return Bound(ageFlags8 & BOUND_MASK); }
-    inline bool isExactBound() const { return bound() & BOUND_EXACT; }
-    inline bool isLowerBound() const { return bound() & BOUND_LOWER; }
-    inline bool isUpperBound() const { return bound() & BOUND_UPPER; }
-    inline bool canCutoff(Score score, Score beta) { return score != SCORE_NONE && (bound() & (score >= beta ? BOUND_LOWER : BOUND_UPPER)); }
+    
+    inline bool canCutoff(Score alpha, Score beta, int ply) {
+        Score s = score(ply);
+        Bound b = bound();
+        if (s == SCORE_NONE) return false;
+        return (b == BOUND_LOWER && s >= beta) || (b == BOUND_UPPER && s <= alpha) || (b == BOUND_EXACT && (s >= beta || s <= alpha));
+    }
 
-    inline void refresh(uint8_t age) { ageFlags8 = age | (ageFlags8 & (PV_MASK | BOUND_MASK)); }
+    inline void refresh(uint8_t age) { ageFlags8 = age | (ageFlags8 & PV_MASK); }
 
     inline bool isBetterToKeep(const TTEntry &other, uint8_t age) const {
         return this->depth8 - ((AGE_CYCLE + age - this->ageFlags8) & AGE_MASK)
@@ -1619,11 +1635,10 @@ private:
 
     uint16_t hash16;
     Move move16;
-    int16_t eval16;
-    int16_t score16;
+    int16_t ibv_value;
     uint8_t depth8;
     uint8_t ageFlags8;
-}; // 10 Bytes
+}; // 6 Bytes
 
 class TranspositionTable {
 public:
@@ -1637,7 +1652,7 @@ public:
     void newSearch();
 
     TTResult get(uint64_t hash);
-    void set(TTEntry *tte, uint64_t hash, int depth, int ply, Bound bound, Move move, Score eval, Score score, bool pv);
+    void set(TTEntry *tte, uint64_t hash, int depth, int ply, Bound bound, Move move, Score score, bool pv);
 
     inline void prefetch(uint64_t hash) const { __builtin_prefetch(&buckets[index(hash)]); }
 
@@ -1647,8 +1662,6 @@ public:
 private:
     struct TTBucket {
         TTEntry entries[TT_ENTRIES_PER_BUCKET];
-        uint16_t padding;
-
         inline TTEntry *begin() { return &entries[0]; }
         inline TTEntry *end() { return &entries[TT_ENTRIES_PER_BUCKET]; }
     }; // 32 Bytes
@@ -1657,7 +1670,6 @@ private:
     size_t nbBuckets;
     uint8_t age;
 
-    //inline uint64_t index(uint64_t hash) { return hash % nbBuckets; }
     inline uint64_t index(uint64_t hash) const { return ((unsigned __int128)hash * (unsigned __int128)nbBuckets) >> 64; }
 };
 
@@ -1918,7 +1930,6 @@ struct SearchLimits {
 };
 
 struct Node {
-    Score staticEval;
     MoveList pv;
     //MovePicker mp;
 };
@@ -2409,12 +2420,22 @@ Position::Position() {
 }
 
 Position::Position(const Position &other) {
-    std::memcpy(this, &other, sizeof(Position));
+    std::memcpy(pieces, other.pieces, sizeof(pieces));
+    std::memcpy(sideBB, other.sideBB, sizeof(sideBB));
+    std::memcpy(piecesBB, other.piecesBB, sizeof(piecesBB));
+    sideToMove = other.sideToMove;
+    std::memcpy(history, other.history, sizeof(history));
+    state = history + (other.state - other.history);
     this->state = this->history + (other.state - other.history);
 }
 
 Position& Position::operator=(const Position &other) {
-    std::memcpy(this, &other, sizeof(Position));
+    std::memcpy(pieces, other.pieces, sizeof(pieces));
+    std::memcpy(sideBB, other.sideBB, sizeof(sideBB));
+    std::memcpy(piecesBB, other.piecesBB, sizeof(piecesBB));
+    sideToMove = other.sideToMove;
+    std::memcpy(history, other.history, sizeof(history));
+    state = history + (other.state - other.history);
     this->state = this->history + (other.state - other.history);
 
     return *this;
@@ -3330,7 +3351,7 @@ std::tuple<bool, TTEntry *> TranspositionTable::get(uint64_t hash) {
 }
 
 // Update TTEntry with fresh informations. Logic is greatly inspired from stockfish
-void TranspositionTable::set(TTEntry *tte, uint64_t hash, int depth, int ply, Bound bound, Move move, Score eval, Score score, bool pv) {
+void TranspositionTable::set(TTEntry *tte, uint64_t hash, int depth, int ply, Bound bound, Move move, Score score, bool pv) {
     assert(depth >= 0);
     assert(tte != nullptr);
     assert(move != MOVE_NULL);
@@ -3341,10 +3362,9 @@ void TranspositionTable::set(TTEntry *tte, uint64_t hash, int depth, int ply, Bo
 
     if (bound == BOUND_EXACT || !tte->hashEquals(hash) || (depth + 2*pv + 2 > tte->depth())) {
         tte->hash16 = (uint16_t)hash;
-        tte->eval16 = (int16_t)eval;
-        tte->score(score, ply);
+        tte->set(score, bound, ply);
         tte->depth8 = (uint8_t)depth;
-        tte->ageFlags8 = (uint8_t)(age | (pv << 2) | bound);
+        tte->ageFlags8 = (uint8_t)(age | (pv * TTEntry::PV_MASK));
     }
 }
 
@@ -3497,7 +3517,6 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
     Position &pos = sd->position;
     bool inCheck = pos.inCheck();
     Score eval;
-    bool improving = false;
 
     if (RootNode) {
         node.pv.clear();
@@ -3510,37 +3529,27 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
 
     // Query Transposition Table
     auto&&[ttHit, tte] = tt.get(pos.hash());
-    Score ttScore = tte->score(ply);
+    Score ttScore = SCORE_NONE;
+    if (ttHit) {
+        ttScore = tte->score(ply);
+    }
     bool ttPv = PvNode || (ttHit && tte->isPv());
     Move ttMove = ttHit ? tte->move() : MOVE_NONE;
-    bool ttTactical = ttHit ? pos.isTactical(ttMove) : false;
 
     // Transposition Table cutoff
-    if (!PvNode && ttHit && tte->depth() >= depth && tte->canCutoff(ttScore, beta)) {
+    if (!PvNode && ttHit && tte->depth() >= depth && tte->canCutoff(alpha, beta, ply)) {
         return ttScore;
     }
 
     // Static eval
     if (!inCheck) {
-        if (ttHit) {
-            node.staticEval = eval = (tte->eval() != SCORE_NONE ? tte->eval() : evaluate<Me>(pos));
-
-            // Use score instead of eval if available. 
-            if (tte->canCutoff(ttScore, eval)) {
+        if (ttHit && (tte->bound() == BOUND_EXACT) {
                 eval = tte->score(ply);
-            }
         } else {
-            node.staticEval = eval = evaluate<Me>(pos);
-            tt.set(tte, pos.hash(), 0, ply, BOUND_NONE, MOVE_NONE, eval, SCORE_NONE, ttPv);
+            eval = evaluate<Me>(pos);
         }
-
-        // Improving
-        if (ply >= 2 && sd->node(ply - 2).staticEval != SCORE_NONE)
-            improving = (node.staticEval > sd->node(ply - 2).staticEval);
-        else if (ply >= 4 && sd->node(ply - 4).staticEval != SCORE_NONE)
-            improving = (node.staticEval > sd->node(ply - 4).staticEval);
     } else {
-        node.staticEval = eval = SCORE_NONE;
+        staticEval = eval = SCORE_NONE;
     }
 
     sd->moveHistory.clearKillers(ply+1);
@@ -3613,7 +3622,7 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
     // Update Transposition Table
     Bound ttBound =         bestScore >= beta         ? BOUND_LOWER : 
                     !PvNode || bestScore <= alphaOrig ? BOUND_UPPER : BOUND_EXACT;
-    tt.set(tte, pos.hash(), depth, ply, ttBound, bestMove, SCORE_NONE, bestScore, ttPv);
+    tt.set(tte, pos.hash(), depth, ply, ttBound, bestMove, eval, bestScore, ttPv);
 
     return bestScore;
 }
@@ -3640,25 +3649,25 @@ Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
     auto&&[ttHit, tte] = tt.get(pos.hash());
     bool ttPv = PvNode || (ttHit && tte->isPv());
     int ttDepth = inCheck ? 1 : 0; // If we are in check use depth=1 because when we are in check we go through all moves
-    Score ttScore = tte->score(ply);
+    Score ttScore = SCORE_NONE;
+    if (ttHit) {
+        ttScore = tte->score(ply);
+    }
 
     // Transposition Table cutoff
-    if (!PvNode && ttHit && tte->depth() >= ttDepth && tte->canCutoff(ttScore, beta)) {
+    if (!PvNode && ttHit && tte->depth() >= ttDepth && tte->canCutoff(alpha, beta, ply)) {
         return ttScore;
     }
 
     // Standing Pat
     if (!inCheck) {
         if (ttHit) {
-            eval = (tte->eval() != SCORE_NONE ? tte->eval() : evaluate<Me>(pos));
-
-            // Use score instead of eval if available. 
-            if (tte->canCutoff(ttScore, beta)) {
+            if (tte->bound() == BOUND_EXACT)
                 eval = tte->score(ply);
-            }
+            else
+                eval = evaluate<Me>(pos);
         } else {
             eval = evaluate<Me>(pos);
-            tt.set(tte, pos.hash(), ttDepth, ply, BOUND_NONE, MOVE_NONE, eval, SCORE_NONE, ttPv);
         }
 
         if (eval >= beta) {
