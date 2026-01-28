@@ -2,5 +2,5 @@ build/*
 .vscode
 tmp
 *.log
-
+*.profraw
 !/**/.gitkeep

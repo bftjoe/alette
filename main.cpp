@@ -1,4 +1,4 @@
-/* Copyright 2026 Joseph Huang (based on alette by Vincent Bab)
+/* Copyright 2026 Joseph Huang (based on Belette by Vincent Bab)
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
 This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
@@ -627,9 +627,6 @@ public:
     inline void undoMove(Move m) { getSideToMove() == WHITE ? undoMove<WHITE>(m) : undoMove<BLACK>(m); }
     template<Side Me> inline void undoMove(Move m);
 
-    template<Side Me> void doNullMove();
-    template<Side Me> void undoNullMove();
-
     //bool givesCheck(Move m);
 
     inline Side getSideToMove() const { return sideToMove; }
@@ -681,7 +678,6 @@ public:
     inline uint64_t hash() const { return state->hash; }
     uint64_t computeHash() const;
     inline uint64_t getHashAfter(Move m) const;
-    inline uint64_t getHashAfterNullMove() const { return hash() ^ Zobrist::sideToMoveKey; };
 
     inline Bitboard checkMask() const { return state->checkMask; }
     inline Bitboard pinDiag() const { return state->pinDiag; }
@@ -2947,45 +2943,6 @@ template void Position::undoMove<BLACK, PROMOTION>(Move m);
 template void Position::undoMove<BLACK, EN_PASSANT>(Move m);
 template void Position::undoMove<BLACK, CASTLING>(Move m);
 
-template<Side Me> void Position::doNullMove() {
-    assert(!inCheck());
-    assert(getSideToMove() == Me);
-    
-    uint64_t h = state->hash;
-
-    // Reset epSquare (branchless)
-    h ^= Zobrist::enpassantKeys[fileOf(state->epSquare) + NB_FILE*(state->epSquare == SQ_NONE)];
-
-    State *oldState = state++;
-    state->epSquare = SQ_NONE;
-    state->castlingRights = oldState->castlingRights;
-    state->fiftyMoveRule = oldState->fiftyMoveRule + 1;
-    state->halfMoves = oldState->halfMoves + 1;
-    state->capture = NO_PIECE;
-    state->move = MOVE_NULL;
-
-    sideToMove = ~Me;
-    h ^= Zobrist::sideToMoveKey;
-
-    state->hash = h;
-    assert(computeHash() == hash());
-
-    updateThreatenedSquares<~Me>();
-    state->checkers = EmptyBB; // Null move cannot gives check
-    updatePinsAndCheckMask<~Me, false>();
-}
-
-template void Position::doNullMove<WHITE>();
-template void Position::doNullMove<BLACK>();
-
-template<Side Me> void Position::undoNullMove() {
-    state--;
-    sideToMove = Me;
-}
-
-template void Position::undoNullMove<WHITE>();
-template void Position::undoNullMove<BLACK>();
-
 inline void Position::updateBitboards() { 
     sideToMove == WHITE ? updateBitboards<WHITE>() : updateBitboards<BLACK>(); 
 }
@@ -3543,13 +3500,13 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
 
     // Static eval
     if (!inCheck) {
-        if (ttHit && (tte->bound() == BOUND_EXACT) {
+        if (ttHit && (tte->bound() == BOUND_EXACT) ) {
                 eval = tte->score(ply);
         } else {
             eval = evaluate<Me>(pos);
         }
     } else {
-        staticEval = eval = SCORE_NONE;
+        eval = SCORE_NONE;
     }
 
     sd->moveHistory.clearKillers(ply+1);
@@ -3622,7 +3579,7 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
     // Update Transposition Table
     Bound ttBound =         bestScore >= beta         ? BOUND_LOWER : 
                     !PvNode || bestScore <= alphaOrig ? BOUND_UPPER : BOUND_EXACT;
-    tt.set(tte, pos.hash(), depth, ply, ttBound, bestMove, eval, bestScore, ttPv);
+    tt.set(tte, pos.hash(), depth, ply, ttBound, bestMove, bestScore, ttPv);
 
     return bestScore;
 }
@@ -3713,7 +3670,7 @@ Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
 
     // Update Transposition Table
     Bound ttBound = bestScore >= beta ? BOUND_LOWER : BOUND_UPPER;
-    tt.set(tte, pos.hash(), ttDepth, ply, ttBound, bestMove, eval, bestScore, ttPv);
+    tt.set(tte, pos.hash(), ttDepth, ply, ttBound, bestMove, bestScore, ttPv);
 
     return bestScore;
 }
