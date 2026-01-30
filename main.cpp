@@ -1991,11 +1991,11 @@ struct SearchData {
 };
 
 struct SearchEvent {
-    SearchEvent(int depth_, const MoveList &pv_, Score bestScore_, size_t nbNode_, TimeMs elapsed_, size_t hashfull_): 
-        depth(depth_), pv(pv_), bestScore(bestScore_), nbNodes(nbNode_), elapsed(elapsed_), hashfull(hashfull_) { }
+    SearchEvent(int depth_, const Move move_, Score bestScore_, size_t nbNode_, TimeMs elapsed_, size_t hashfull_): 
+        depth(depth_), bestMove(move_), bestScore(bestScore_), nbNodes(nbNode_), elapsed(elapsed_), hashfull(hashfull_) { }
 
     int depth;
-    const MoveList &pv;
+    const Move bestMove;
     Score bestScore;
     size_t nbNodes;
     TimeMs elapsed;
@@ -3307,7 +3307,7 @@ std::tuple<bool, TTEntry *> TranspositionTable::get(uint64_t hash) {
     return TTResult(false, toReplace);
 }
 
-// Update TTEntry with fresh informations. Logic is greatly inspired from stockfish
+// Update TTEntry with fresh information. Logic is greatly inspired from stockfish
 void TranspositionTable::set(TTEntry *tte, uint64_t hash, int depth, int ply, Bound bound, Move move, Score score, bool pv) {
     assert(depth >= 0);
     assert(tte != nullptr);
@@ -3424,18 +3424,17 @@ void Engine::idSearch() {
 
         if (depth > 1 && searchAborted()) break;
 
-        bestPv = sd->node(0).pv;
         bestScore = score;
         completedDepth = depth;
 
-        onSearchProgress(SearchEvent(depth, bestPv, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage()));
+        onSearchProgress(SearchEvent(depth, sd->node(0).pv[0], bestScore, sd->nbNodes, sd->getElapsed(), tt.usage()));
 
         if (sd->limits.maxDepth > 0 && depth >= sd->limits.maxDepth) break;
 
         if (sd->shouldStopSoft()) break;
     }
 
-    SearchEvent event(depth, bestPv, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage());
+    SearchEvent event(depth, bestPv[0], bestScore, sd->nbNodes, sd->getElapsed(), tt.usage());
 
     if (depth != completedDepth) {
         event.depth = completedDepth;
@@ -3879,7 +3878,7 @@ bool Uci::cmdSetOption(std::istringstream& is) {
     }
 
     if (!options.count(name))
-        console << "Unknow option '" << name << "'" << std::endl;
+        console << "Unknown option '" << name << "'" << std::endl;
         
     options[name] = value;
 
@@ -4051,19 +4050,11 @@ void UciEngine::onSearchProgress(const SearchEvent &event) {
         << " nps " << (int)((float)event.nbNodes / std::max<std::common_type_t<int, TimeMs>>(1, event.elapsed) * 1000.0f)
         << " time " << event.elapsed
         << " hashfull " << event.hashfull
-        << " tbhits " << 0;
-
-    if (!event.pv.empty()) 
-        console << " pv " << event.pv;
-    
-    console << std::endl;
+        << " pv " << Uci::formatMove(event.bestMove) << std::endl;
 }
 
 void UciEngine::onSearchFinish(const SearchEvent &event) {
-    Move bestMove = MOVE_NONE;
-    if (!event.pv.empty()) bestMove = event.pv.front();
-
-    console << "bestmove " << Uci::formatMove(bestMove) << std::endl;
+    console << "bestmove " << Uci::formatMove(event.bestMove) << std::endl;
 }
 
 } /* namespace alette */

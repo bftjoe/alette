@@ -5,7 +5,7 @@ It only supports CPUs with AVX2 and BMI2 instructions.
 
 ## Compiling
 
-Tested on Windows and Linux with clang 18 or higher.
+Tested on Windows and Linux with clang++ 20 or higher.
 
 ```sh
 make release

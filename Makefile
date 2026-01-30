@@ -16,7 +16,7 @@ PGO_DATA := alette.profdata
 PGO_MERGE := llvm-profdata merge -output=$(PGO_DATA) *.profraw
 PGO_USE := -fprofile-instr-use=$(PGO_DATA)
 
-CPPFLAGS := -std=c++20 -fno-rtti -mbmi -mbmi2 -mpopcnt -msse2 -msse3 -msse4.1 -mavx2 -D_CRT_SECURE_NO_WARNINGS
+CPPFLAGS := -std=c++2c -fno-rtti -mbmi -mbmi2 -mpopcnt -msse2 -msse3 -msse4.1 -mavx2 -D_CRT_SECURE_NO_WARNINGS
 CPPFLAGS_DEBUG := $(CPPFLAGS) -g -O1 -DDEBUG
 CPPFLAGS_RELEASE := $(CPPFLAGS) -O3 -funroll-loops -finline -fomit-frame-pointer -DNDEBUG
 
