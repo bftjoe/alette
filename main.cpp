@@ -1908,6 +1908,7 @@ MoveScore MovePicker::scoreQuiet(Move m) {
 } /* namespace alette */
 
 #include <atomic>
+#include <thread>
 
 namespace alette {
 
@@ -1916,7 +1917,6 @@ struct SearchLimits {
     TimeMs increment[NB_SIDE] = {0};
     int movesToGo = 0;
     int maxDepth = 0;
-    size_t maxNodes = 0;
     TimeMs maxTime = 0;
     MoveList searchMoves;
 };
@@ -1938,7 +1938,6 @@ struct SearchData {
     inline bool useTournamentTime() { return !!(limits.timeLeft[WHITE] | limits.timeLeft[WHITE]); }
     inline bool useFixedTime() { return limits.maxTime > 0; }
     inline bool useTimeLimit() { return useTournamentTime() || useTimeLimit(); }
-    inline bool useNodeCountLimit() { return limits.maxNodes > 0; }
 
     inline bool shouldStop() {
         // Check time every 1024 nodes for performance reason
@@ -1949,8 +1948,6 @@ struct SearchData {
         if (useTournamentTime() && elapsed >= hardTimeLimit)
             return true;
         if (useFixedTime() && (elapsed > limits.maxTime))
-            return true;
-        if (useNodeCountLimit() && nbNodes >= limits.maxNodes)
             return true;
         
         return false;
@@ -1998,7 +1995,19 @@ enum class NodeType {
 
 class Engine {
 public:    
-    Engine() = default;
+    Engine() {
+        std::thread th([&] {
+            for (;;){
+                if (!searching)
+                    searching.wait(false);
+    
+                idSearch();
+                searching = false;
+                searching.notify_one();
+            }
+        });
+        th.detach();
+    }
     virtual ~Engine() = default;
 
     inline Position &position() { return rootPosition; }
@@ -2008,7 +2017,7 @@ public:
     void stop();
     void waitForSearchFinish();
     inline bool isSearching() { return searching; }
-    inline bool searchAborted() { return aborted.load(std::memory_order::relaxed); }
+    inline bool searchAborted() { return !searching.load(std::memory_order::relaxed); }
     inline void setHashSize(size_t size) { tt.resize(size); }
     inline void newGame() { tt.clear(); }
 
@@ -2019,7 +2028,6 @@ protected:
 private:
     std::unique_ptr<SearchData> sd;
     Position rootPosition;
-    std::atomic_bool aborted = true;
     std::atomic_bool searching = false;
 
     inline void idSearch() { rootPosition.getSideToMove() == WHITE ? idSearch<WHITE>() : idSearch<BLACK>(); }
@@ -3344,19 +3352,14 @@ void Engine::search(const SearchLimits &limits) {
     if (searching) return;
 
     sd = std::make_unique<SearchData>(position(), limits);
-    aborted = false;
     searching = true;
-    
     tt.newSearch();
 
-    std::thread th([&] { 
-        this->idSearch();
-    });
-    th.detach();
+    searching.notify_one();
 }
 
 void Engine::stop() {
-    aborted = true;
+    searching = false;
 }
 
 // Iterative deepening loop
@@ -3423,9 +3426,6 @@ void Engine::idSearch() {
     }
 
     onSearchFinish(event);
-
-    searching = false;
-    searching.notify_one();
 }
 
 // Negamax search
@@ -3922,7 +3922,8 @@ bool Uci::cmdGo(std::istringstream& is) {
             params.maxDepth = parseInt64(token);
         } else if (token == "nodes") {
             is >> token;
-            params.maxNodes = parseInt64(token);
+            std::cerr << "node limit is not supported";
+            std::terminate();
         } else if (token == "mate") {
             // unsupported
         } else if (token == "movetime") {
