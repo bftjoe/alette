@@ -1939,24 +1939,13 @@ struct SearchData {
     inline bool useFixedTime() { return limits.maxTime > 0; }
     inline bool useTimeLimit() { return useTournamentTime() || useTimeLimit(); }
 
-    inline bool shouldStop() {
-        // Check time every 1024 nodes for performance reason
-        if (nbNodes % 1024 != 0)  return false;
-        
-        TimeMs elapsed = now() - startTime;
-
-        if (useTournamentTime() && elapsed >= hardTimeLimit)
-            return true;
-        if (useFixedTime() && (elapsed > limits.maxTime))
-            return true;
-        
-        return false;
-    }
-
     inline bool shouldStopSoft() {
         TimeMs elapsed = now() - startTime;
         
         if (useTournamentTime() && elapsed >= softTimeLimit)
+            return true;
+
+        else if (useFixedTime() && (elapsed > limits.maxTime))
             return true;
 
         return false;
