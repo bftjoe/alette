@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License along with thi
 
 #include <set>
 #include <cassert>
+#include <cstdlib>
 #include <functional>
 
 #include <chrono>
@@ -28,28 +29,21 @@ inline TimeMs now() {
     return std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-inline int parseInt(const std::string &str) {
-    try {
-        return std::stoi(str);
-    } catch (const std::invalid_argument & e) {
-        return 0;
-    } catch (const std::out_of_range & e) {
-        return 0;
-    }
-
-    return 0;
-}
-
 inline int64_t parseInt64(const std::string &str) {
-    try {
-        return std::stoll(str);
-    } catch (const std::invalid_argument & e) {
-        return 0;
-    } catch (const std::out_of_range & e) {
-        return 0;
+    char* end_ptr;
+    long result = std::strtol(str.c_str(), &end_ptr, 10);
+
+    // Check for errors
+    if (end_ptr == str.c_str()) {
+        std::cerr << "Error: No digits were found (conversion could not be performed)" << std::endl;
+    } else if (*end_ptr != '\0') {
+        std::cerr << "Error: Partial conversion. Remaining string: " << end_ptr << std::endl;
+        // The 'result' variable still contains the successfully parsed integer portion (12345 in this case)
+    } else {
+        std::cout << "Successfully parsed integer: " << result << std::endl;
     }
 
-    return 0;
+    return result;
 }
 
 // https://stackoverflow.com/questions/9779105/generic-member-function-pointer-as-a-template-parameter
@@ -97,7 +91,7 @@ public:
     }
     inline operator bool() const {
         if (isCheck()) return value == "true";
-        if (isSpin()) return parseInt(value) != 0;
+        if (isSpin()) return parseInt64(value) != 0;
         
         return !value.empty();
     }
@@ -1925,11 +1919,6 @@ struct SearchLimits {
     MoveList searchMoves;
 };
 
-struct Node {
-    MoveList pv;
-    //MovePicker mp;
-};
-
 struct SearchData {
     SearchData(const Position& pos_, const SearchLimits& limits_)
     : position(pos_), limits(limits_), nbNodes(0) {
@@ -1974,8 +1963,6 @@ struct SearchData {
         return false;
     }
 
-    inline Node &node(int ply) { assert(ply >= 0 && ply < MAX_PLY); return nodes[ply]; }
-
     Position position;
     SearchLimits limits;
     size_t nbNodes;
@@ -1986,8 +1973,6 @@ struct SearchData {
     TimeMs hardTimeLimit;
 
     MoveHistory moveHistory;
-
-    Node nodes[MAX_PLY+1];
 };
 
 struct SearchEvent {
@@ -2226,7 +2211,7 @@ UciOption& UciOption::operator=(const std::string& newValue)
 {
     if (!isButton() && newValue.empty()) return *this;
     if (isCheck() && newValue != "true" && newValue != "false") return *this;
-    if (isSpin() && parseInt(newValue) < min && parseInt(newValue) > max) return *this;
+    if (isSpin() && parseInt64(newValue) < min && parseInt64(newValue) > max) return *this;
     if (isCombo() && this->allowedValues.count(newValue) != 1) return *this;
 
     if (!isButton())
@@ -3256,7 +3241,10 @@ void TranspositionTable::resize(size_t size){
 
     if (nbBuckets > 0) {
         buckets = static_cast<TTBucket *>(std::malloc(sizeof(TTBucket) * nbBuckets));
-        if (!buckets) throw std::runtime_error("failed to allocate memory for transposition table");
+        if (!buckets) {
+            std::cerr << "failed to allocate memory for transposition table" << std::endl;
+            std::terminate(); 
+        }
     }
 
     clear();
@@ -3336,12 +3324,6 @@ namespace alette {
 
 namespace alette {
 
-void updatePv(MoveList &pv, Move move, const MoveList &childPv) {
-    pv.clear();
-    pv.push_back(move);
-    pv.insert(childPv.begin(), childPv.end());
-}
-
 void SearchData::initAllocatedTime() {
     int64_t moves = limits.movesToGo > 0 ? limits.movesToGo + 5 : 30;
     Side stm = position.getSideToMove();
@@ -3380,11 +3362,11 @@ void Engine::stop() {
 // Iterative deepening loop
 template<Side Me>
 void Engine::idSearch() {
-    MoveList bestPv;
     Score bestScore;
-    int depth, searchDepth, completedDepth = 0;
+    int depth = 1, searchDepth, completedDepth = 0;
+    Move bestMove;
 
-    for (depth = 1; depth < MAX_PLY; depth++) {
+    do{
         Score alpha = -SCORE_INFINITE, beta = SCORE_INFINITE;
         Score delta = 0, score = -SCORE_INFINITE;
 
@@ -3397,13 +3379,11 @@ void Engine::idSearch() {
             beta  = std::min( SCORE_INFINITE, bestScore + delta);
         }
 
-        while (true) {
+        do {
             if (alpha < -1000) alpha = -SCORE_INFINITE;
             if (beta > 1000) beta = SCORE_INFINITE;
             //std::cout << "  depth=" << searchDepth << " d=" << delta << std::endl;
             score = pvSearch<Me, NodeType::Root>(alpha, beta, searchDepth, 0, false);
-
-            if (searchAborted()) break;
 
             if (score <= alpha) { // Fail low
                 //std::cout << "  Fail Low: a=" << alpha << " b=" << beta << " score=" << score << std::endl;
@@ -3420,21 +3400,22 @@ void Engine::idSearch() {
             }
 
             delta += delta / 2;
-        }
-
-        if (depth > 1 && searchAborted()) break;
+        } while (!searchAborted());
 
         bestScore = score;
         completedDepth = depth;
 
-        onSearchProgress(SearchEvent(depth, sd->node(0).pv[0], bestScore, sd->nbNodes, sd->getElapsed(), tt.usage()));
+        auto [found, tte] = tt.get(sd->position.hash());
+        if (found)
+            bestMove = tte->move();
+        onSearchProgress(SearchEvent(depth, bestMove, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage()));
 
         if (sd->limits.maxDepth > 0 && depth >= sd->limits.maxDepth) break;
 
         if (sd->shouldStopSoft()) break;
-    }
+    } while ( ++depth < MAX_PLY && !searchAborted() );
 
-    SearchEvent event(depth, bestPv[0], bestScore, sd->nbNodes, sd->getElapsed(), tt.usage());
+    SearchEvent event(depth, bestMove, bestScore, sd->nbNodes, sd->getElapsed(), tt.usage());
 
     if (depth != completedDepth) {
         event.depth = completedDepth;
@@ -3466,17 +3447,12 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         if (alpha >= beta) return alpha;
     }
 
-    Node& node = sd->node(ply);
     Score alphaOrig = alpha;
     Score bestScore = -SCORE_INFINITE;
     Move bestMove = MOVE_NONE;
     Position &pos = sd->position;
     bool inCheck = pos.inCheck();
     Score eval;
-
-    if (RootNode) {
-        node.pv.clear();
-    }
 
     if (pos.isFiftyMoveDraw() || pos.isRepetitionDraw()) {
         // "Random" either -1 or 1, avoid blindness to 3-fold repetitions
@@ -3525,9 +3501,6 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
 
         sd->nbNodes++;
 
-        if (PvNode)
-            sd->node(ply+1).pv.clear();
-
         // Do move
         pos.doMove<Me>(move);
 
@@ -3545,16 +3518,12 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         // Undo move
         pos.undoMove<Me>(move);
 
-        if (searchAborted()) return false; // break
-
         if (score > bestScore) {
             bestScore = score;
             
             if (bestScore > alpha) {
                 bestMove = move;
                 alpha = bestScore;
-                if (PvNode)
-                    updatePv(node.pv, move, sd->node(ply+1).pv);
 
                 if (alpha >= beta) {
                     sd->moveHistory.update<Me>(pos, bestMove, ply, depth, quietMoves);
@@ -3568,7 +3537,7 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         }
 
         return true;
-    }); if (searchAborted()) return bestScore;
+    });
 
     // Checkmate / Stalemate detection
     if (nbMoves == 0) {
@@ -3795,7 +3764,7 @@ Move Uci::parseMove(std::string str) const {
 void Uci::loop(int argc, char* argv[]) {
     if (argc > 1 && std::string(argv[1]) == "bench") {
         int depth = DEFAULT_BENCH_DEPTH;
-        if (argc > 2) depth = parseInt(std::string(argv[2]));
+        if (argc > 2) depth = parseInt64(std::string(argv[2]));
 
         bench(depth);
 
@@ -3934,30 +3903,30 @@ bool Uci::cmdGo(std::istringstream& is) {
             // unsupported
         } else if (token == "wtime") {
             is >> token;
-            params.timeLeft[WHITE] = parseInt(token);
+            params.timeLeft[WHITE] = parseInt64(token);
         } else if (token == "btime") {
             is >> token;
-            params.timeLeft[BLACK] = parseInt(token);
+            params.timeLeft[BLACK] = parseInt64(token);
         } else if (token == "winc") {
             is >> token;
-            params.increment[WHITE] = parseInt(token);
+            params.increment[WHITE] = parseInt64(token);
         } else if (token == "binc") {
             is >> token;
-            params.increment[BLACK] = parseInt(token);
+            params.increment[BLACK] = parseInt64(token);
         } else if (token == "movestogo") {
             is >> token;
-            params.movesToGo = parseInt(token);
+            params.movesToGo = parseInt64(token);
         } else if (token == "depth") {
             is >> token;
-            params.maxDepth = parseInt(token);
+            params.maxDepth = parseInt64(token);
         } else if (token == "nodes") {
             is >> token;
-            params.maxNodes = parseInt(token);
+            params.maxNodes = parseInt64(token);
         } else if (token == "mate") {
             // unsupported
         } else if (token == "movetime") {
             is >> token;
-            params.maxTime = parseInt(token);
+            params.maxTime = parseInt64(token);
         } else if (token == "infinite") {
              
         }
@@ -3993,7 +3962,7 @@ bool Uci::cmdDebug(std::istringstream& is) {
         }
 
         is >> token;
-        int threshold = parseInt(token);
+        int threshold = parseInt64(token);
 
         console << Uci::formatMove(m) << "/" << threshold << " => " << (engine.position().see(m, threshold) ? "PASS" : "FAIL") << std::endl;
     } else {
