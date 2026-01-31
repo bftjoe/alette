@@ -1907,6 +1907,8 @@ MoveScore MovePicker::scoreQuiet(Move m) {
 
 } /* namespace alette */
 
+#include <atomic>
+
 namespace alette {
 
 struct SearchLimits {
@@ -1993,6 +1995,7 @@ enum class NodeType {
     NonPV
 };
 
+
 class Engine {
 public:    
     Engine() = default;
@@ -2005,7 +2008,7 @@ public:
     void stop();
     void waitForSearchFinish();
     inline bool isSearching() { return searching; }
-    inline bool searchAborted() { return aborted; }
+    inline bool searchAborted() { return aborted.load(std::memory_order::relaxed); }
     inline void setHashSize(size_t size) { tt.resize(size); }
     inline void newGame() { tt.clear(); }
 
@@ -2016,8 +2019,8 @@ protected:
 private:
     std::unique_ptr<SearchData> sd;
     Position rootPosition;
-    bool aborted = true;
-    bool searching = false;
+    std::atomic_bool aborted = true;
+    std::atomic_bool searching = false;
 
     inline void idSearch() { rootPosition.getSideToMove() == WHITE ? idSearch<WHITE>() : idSearch<BLACK>(); }
     template<Side Me> void idSearch();
@@ -3333,10 +3336,7 @@ void SearchData::initAllocatedTime() {
 }
 
 void Engine::waitForSearchFinish() {
-    // TODO: use condition variable ?
-    while (isSearching()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+    searching.wait(true);
 }
 
 // Search entry point
@@ -3425,6 +3425,7 @@ void Engine::idSearch() {
     onSearchFinish(event);
 
     searching = false;
+    searching.notify_one();
 }
 
 // Negamax search
