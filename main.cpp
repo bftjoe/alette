@@ -1634,17 +1634,11 @@ class TranspositionTable {
 public:
     using TTResult = std::tuple<bool, TTEntry *>;
 
-    TranspositionTable(size_t defaultSize = TT_DEFAULT_SIZE);
-    ~TranspositionTable();
-
-    void resize(size_t size);
     void clear();
     void newSearch();
 
     TTResult get(uint64_t hash);
     void set(TTEntry *tte, uint64_t hash, int depth, int ply, Bound bound, Move move, Score score, bool pv);
-
-    inline void prefetch(uint64_t hash) const { __builtin_prefetch(&buckets[index(hash)]); }
 
     size_t usage() const;
     inline size_t size() const { return nbBuckets; }
@@ -1656,8 +1650,8 @@ private:
         inline TTEntry *end() { return &entries[TT_ENTRIES_PER_BUCKET]; }
     }; // 32 Bytes
 
-    TTBucket *buckets;
-    size_t nbBuckets;
+    static constexpr size_t nbBuckets = TT_DEFAULT_SIZE / sizeof(TTBucket);
+    TTBucket buckets[nbBuckets];
     uint8_t age;
 
     inline uint64_t index(uint64_t hash) const { return ((unsigned __int128)hash * (unsigned __int128)nbBuckets) >> 64; }
@@ -1728,8 +1722,6 @@ bool MovePicker::enumerate(const Handler &handler) {
     
     bool skipQuiets = false;
 
-    tt.prefetch(pos->getHashAfter(ttMove));
-
     // TT Move
     if (pos->isLegal<Me>(ttMove)) {
         CALL_HANDLER(ttMove, skipQuiets);
@@ -1744,8 +1736,6 @@ bool MovePicker::enumerate(const Handler &handler) {
     if (pos->inCheck()) {
         enumerateLegalMoves<Me, ALL_MOVES>(*pos, [&](Move m) {
             if (m == ttMove) return true; // continue;
-
-            tt.prefetch(pos->getHashAfter(m));
 
             ScoredMove newMove = ScoredMove(m, scoreEvasion<Me>(m));
             moves.insert_sorted(newMove, compare);
@@ -1827,13 +1817,11 @@ bool MovePicker::enumerate(const Handler &handler) {
 
     // Bad tacticals
     for (current = moves.begin(); current != endBadTacticals; current++) {
-        tt.prefetch(pos->getHashAfter(current->move));
         CALL_HANDLER(current->move, skipQuiets);
     }
 
     // Bad quiets
     for (current = beginQuiets; current != endBadQuiets && !skipQuiets; current++) {
-        tt.prefetch(pos->getHashAfter(current->move));
         CALL_HANDLER(current->move, skipQuiets);
     }
 
@@ -2007,7 +1995,6 @@ public:
     void waitForSearchFinish();
     inline bool isSearching() { return searching; }
     inline bool searchAborted() { return !searching.load(std::memory_order::relaxed); }
-    inline void setHashSize(size_t size) { tt.resize(size); }
     inline void newGame() { tt.clear(); }
 
 protected:
@@ -2029,7 +2016,7 @@ private:
 
 } /* namespace alette */
 
-#define VERSION "3.1.1-DEV"
+#define VERSION "0.1"
 
 namespace alette {
 
@@ -3222,34 +3209,6 @@ namespace alette {
 // Global Transposition Table
 TranspositionTable tt;
 
-TranspositionTable::TranspositionTable(size_t defaultSize): buckets(nullptr), nbBuckets(0), age(0) {
-    resize(defaultSize);
-}
-
-TranspositionTable::~TranspositionTable(){
-    if (buckets != nullptr)
-        std::free(buckets);
-}
-
-void TranspositionTable::resize(size_t size){
-    if (buckets != nullptr) {
-        std::free(buckets);
-        buckets = nullptr;
-    }
-
-    nbBuckets = size / sizeof(TTBucket);
-
-    if (nbBuckets > 0) {
-        buckets = static_cast<TTBucket *>(std::malloc(sizeof(TTBucket) * nbBuckets));
-        if (!buckets) {
-            std::cerr << "failed to allocate memory for transposition table" << std::endl;
-            std::terminate(); 
-        }
-    }
-
-    clear();
-}
-
 void TranspositionTable::clear() {
     std::memset(buckets, 0, nbBuckets * sizeof(TTBucket));
     age = 0;
@@ -3667,9 +3626,7 @@ Uci::Uci()  {
     console << "alette " << VERSION << " by Joseph Huang" << std::endl;
     
     options["Debug Log File"] = UciOption("", [&] (const UciOption &opt) { console.setLogFile(opt); });
-    options["Hash"] = UciOption(64, 1, 1048576, [&] (const UciOption &opt) { 
-        engine.setHashSize(int64_t(opt)*1024*1024);
-    });
+    options["Hash"] = UciOption(TT_DEFAULT_SIZE, TT_DEFAULT_SIZE, TT_DEFAULT_SIZE);
     options["Threads"] = UciOption(1, 1, 1);
 
     commands["uci"] = &Uci::cmdUci;
