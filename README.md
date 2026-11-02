@@ -10,7 +10,7 @@ Tested on Windows and Linux with clang++ 20 or higher.
 ```sh
 make release
 ```
-Executable will be in `./build/alette[.exe]`
+Executable will be in `./alette[.exe]`
 
 ## UCI Options
 

@@ -1569,7 +1569,7 @@ namespace alette {
 
 constexpr size_t TT_DEFAULT_SIZE = 1024*1024*16;
 
-constexpr int TT_ENTRIES_PER_BUCKET = 2;
+constexpr size_t TT_CACHE_LINE_SIZE = 64;
 
 enum Bound {
     BOUND_EXACT = 0,
@@ -1640,7 +1640,12 @@ private:
     int16_t ibv_value;
     uint8_t depth8;
     uint8_t ageFlags8;
-}; // 6 Bytes
+};
+
+static_assert(sizeof(TTEntry) <= TT_CACHE_LINE_SIZE);
+static_assert(TT_CACHE_LINE_SIZE % sizeof(TTEntry) == 0);
+
+constexpr size_t TT_ENTRIES_PER_BUCKET = TT_CACHE_LINE_SIZE / sizeof(TTEntry);
 
 class TranspositionTable {
 public:
@@ -1662,11 +1667,13 @@ public:
     inline size_t size() const { return nbBuckets; }
 
 private:
-    struct TTBucket {
+    struct alignas(TT_CACHE_LINE_SIZE) TTBucket {
         TTEntry entries[TT_ENTRIES_PER_BUCKET];
         inline TTEntry *begin() { return &entries[0]; }
         inline TTEntry *end() { return &entries[TT_ENTRIES_PER_BUCKET]; }
-    }; // 32 Bytes
+    };
+
+    static_assert(sizeof(TTBucket) == TT_CACHE_LINE_SIZE);
 
     TTBucket *buckets;
     size_t nbBuckets;
@@ -3294,6 +3301,7 @@ namespace alette {
 
 } /* namespace alette */
 #include <stdexcept>
+#include <new>
 
 namespace alette {
 
@@ -3306,19 +3314,19 @@ TranspositionTable::TranspositionTable(size_t defaultSize): buckets(nullptr), nb
 
 TranspositionTable::~TranspositionTable(){
     if (buckets != nullptr)
-        std::free(buckets);
+        delete[] buckets;
 }
 
 void TranspositionTable::resize(size_t size){
     if (buckets != nullptr) {
-        std::free(buckets);
+        delete[] buckets;
         buckets = nullptr;
     }
 
     nbBuckets = size / sizeof(TTBucket);
 
     if (nbBuckets > 0) {
-        buckets = static_cast<TTBucket *>(std::malloc(sizeof(TTBucket) * nbBuckets));
+        buckets = new (std::nothrow) TTBucket[nbBuckets];
         if (!buckets) {
             std::cerr << "failed to allocate memory for transposition table" << std::endl;
             std::terminate(); 
