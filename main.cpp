@@ -590,6 +590,8 @@ struct State {
     Move move;
 
     Piece capture;
+    Score mg;
+    Score eg;
 
     uint64_t hash;
     Bitboard threatsFor[NB_PIECE_TYPE];
@@ -662,6 +664,12 @@ public:
     inline Bitboard getEmptyBB() const { return ~getPiecesBB(); }
 
     inline Bitboard getAttackers(Square sq, Bitboard occupied) const;
+
+    template<Phase P>
+    inline Score evalWhite() const;
+
+    template<Side Me>
+    inline Score eval() const;
 
     inline Bitboard threatsFor(PieceType pt) const { return state->threatsFor[pt]; }
     inline Bitboard checkedSquares() const { return threatsFor(KING); }
@@ -760,6 +768,7 @@ inline bool Position::isRepetitionDraw() const {
     return false;
 }
 
+
 template<Side Me>
 inline void Position::doMove(Move m) {
     switch(moveType(m)) {
@@ -797,6 +806,9 @@ inline uint64_t Position::getHashAfter(Move m) const {
 } /* namespace alette */
 
 namespace alette {
+
+template<Phase P>
+Score pieceEvalWhite(Piece p, Square sq);
 
 constexpr Score Tempo = 10;
 
@@ -2430,6 +2442,8 @@ void Position::reset() {
     state->epSquare = SQ_NONE;
     state->castlingRights = NO_CASTLING;
     state->move = MOVE_NONE;
+    state->mg = 0;
+    state->eg = 0;
     for(int i=0; i<NB_PIECE_TYPE; i++) state->threatsFor[i] = EmptyBB;
 
     for(int i=0; i<NB_SQUARE; i++) pieces[i] = NO_PIECE;
@@ -2564,6 +2578,8 @@ bool Position::setFromFEN(const std::string &fen) {
     }
 
     updateBitboards();
+    this->state->mg = this->evalWhite<MG>();
+    this->state->eg = this->evalWhite<EG>();
     this->state->hash = computeHash();
 
     return true;
@@ -2780,6 +2796,8 @@ void Position::doMove(Move m) {
     state->halfMoves = oldState->halfMoves + 1;
     state->capture = capture;
     state->move = m;
+    state->mg = oldState->mg;
+    state->eg = oldState->eg;
 
     if constexpr (Mt == NORMAL) {
         // TODO: Try to remove branching using xor
@@ -2787,6 +2805,13 @@ void Position::doMove(Move m) {
             h ^= Zobrist::keys[capture][to];
             unsetPiece<~Me>(to);
             state->fiftyMoveRule = 0;
+        }
+
+        state->mg += pieceEvalWhite<MG>(p, to) - pieceEvalWhite<MG>(p, from);
+        state->eg += pieceEvalWhite<EG>(p, to) - pieceEvalWhite<EG>(p, from);
+        if (capture != NO_PIECE) {
+            state->mg -= pieceEvalWhite<MG>(capture, to);
+            state->eg -= pieceEvalWhite<EG>(capture, to);
         }
         
         h ^= Zobrist::keys[p][from] ^ Zobrist::keys[p][to];
@@ -2815,10 +2840,17 @@ void Position::doMove(Move m) {
         CastlingRight cr = Me & (to > from ? KING_SIDE : QUEEN_SIDE);
         const Square rookFrom = CastlingRookFrom[cr];
         const Square rookTo = CastlingRookTo[cr];
+        const Piece king = piece(Me, KING);
+        const Piece rook = piece(Me, ROOK);
 
         assert(pieceType(getPieceAt(from)) == KING);
         assert(getPieceAt(rookFrom) == piece(Me, ROOK));
         assert(isEmpty(CastlingPath[cr]));
+
+        state->mg += pieceEvalWhite<MG>(king, to) - pieceEvalWhite<MG>(king, from)
+                  + pieceEvalWhite<MG>(rook, rookTo) - pieceEvalWhite<MG>(rook, rookFrom);
+        state->eg += pieceEvalWhite<EG>(king, to) - pieceEvalWhite<EG>(king, from)
+                  + pieceEvalWhite<EG>(rook, rookTo) - pieceEvalWhite<EG>(rook, rookFrom);
 
         h ^= Zobrist::keys[piece(Me, KING)][from] ^ Zobrist::keys[piece(Me, KING)][to];
         h ^= Zobrist::keys[piece(Me, ROOK)][rookFrom] ^ Zobrist::keys[piece(Me, ROOK)][rookTo];
@@ -2840,6 +2872,15 @@ void Position::doMove(Move m) {
             unsetPiece<~Me>(to);
         }
 
+        state->mg += pieceEvalWhite<MG>(piece(Me, promotionType), to)
+                  - pieceEvalWhite<MG>(p, from);
+        state->eg += pieceEvalWhite<EG>(piece(Me, promotionType), to)
+                  - pieceEvalWhite<EG>(p, from);
+        if (capture != NO_PIECE) {
+            state->mg -= pieceEvalWhite<MG>(capture, to);
+            state->eg -= pieceEvalWhite<EG>(capture, to);
+        }
+
         h ^= Zobrist::keys[piece(Me, PAWN)][from] ^ Zobrist::keys[piece(Me, promotionType)][to];
         unsetPiece<Me>(from);
         setPiece<Me>(to, piece(Me, promotionType));
@@ -2853,6 +2894,11 @@ void Position::doMove(Move m) {
         assert(pieceType(getPieceAt(from)) == PAWN);
 
         const Square epsq = to - pawnDirection(Me);
+
+        state->mg += pieceEvalWhite<MG>(p, to) - pieceEvalWhite<MG>(p, from);
+        state->eg += pieceEvalWhite<EG>(p, to) - pieceEvalWhite<EG>(p, from);
+        state->mg -= pieceEvalWhite<MG>(piece(~Me, PAWN), epsq);
+        state->eg -= pieceEvalWhite<EG>(piece(~Me, PAWN), epsq);
 
         h ^= Zobrist::keys[piece(~Me, PAWN)][epsq];
         h ^= Zobrist::keys[piece(Me, PAWN)][from] ^ Zobrist::keys[piece(Me, PAWN)][to];
@@ -3126,6 +3172,38 @@ bool Position::see(Move move, int threshold) const {
 
 
 namespace alette {
+
+template<Phase P>
+inline Score pieceEvalWhite(Piece p, Square sq) {
+    if (p == NO_PIECE) return 0;
+
+    PieceType pt = pieceType(p);
+    Score base = PieceValue<P>(pt);
+    return (side(p) == WHITE) ? base + PSQT[pt][P][relativeSquare(WHITE, sq)]
+                             : -(base + PSQT[pt][P][relativeSquare(BLACK, sq)]);
+}
+
+template<Phase P>
+inline Score Position::evalWhite() const {
+    Score score = 0;
+
+    for (Square sq = SQ_FIRST; sq < NB_SQUARE; ++sq) {
+        score += pieceEvalWhite<P>(getPieceAt(sq), sq);
+    }
+
+    return score;
+}
+
+template<Side Me>
+inline Score Position::eval() const {
+    int phase = 4 * nbPieceTypes(QUEEN)
+              + 2 * nbPieceTypes(ROOK)
+              + 1 * nbPieceTypes(KNIGHT)
+              + 1 * nbPieceTypes(BISHOP);
+
+    Score score = (state->mg * phase + state->eg * (PHASE_TOTAL - phase)) / PHASE_TOTAL;
+    return Me == WHITE ? score : -score;
+}
 
 template<Side Me, Phase P>
 Score evaluateMaterial(const Position &pos) {
@@ -3468,7 +3546,7 @@ Score Engine::pvSearch(Score alpha, Score beta, int depth, int ply, bool cutNode
         if (ttHit && (tte->bound() == BOUND_EXACT) ) {
                 eval = tte->score(ply);
         } else {
-            eval = evaluate<Me>(pos);
+            eval = pos.eval<Me>();
         }
     } else {
         eval = SCORE_NONE;
@@ -3580,9 +3658,9 @@ Score Engine::qSearch(Score alpha, Score beta, int depth, int ply) {
             if (tte->bound() == BOUND_EXACT)
                 eval = tte->score(ply);
             else
-                eval = evaluate<Me>(pos);
+                eval = pos.eval<Me>();
         } else {
-            eval = evaluate<Me>(pos);
+            eval = pos.eval<Me>();
         }
 
         if (eval >= beta) {
